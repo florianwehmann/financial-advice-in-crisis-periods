@@ -47,3 +47,16 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Data folder
+data/
+
+# Results folder
+results/
+
+# Pipeline output (R/estimation): cached parquet/rds are large and reproducible
+results/cache/
+
+*.RDataTmp
+*.RDataTmp1
+*.Rhisotry
