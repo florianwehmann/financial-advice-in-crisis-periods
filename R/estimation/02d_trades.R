@@ -81,6 +81,35 @@ tr <- tr[is.finite(px_chf) & px_chf > 0]
 log_step("clean trades", tr)
 
 ## ---------------------------------------------------------------------------
+## DROP THE FUND-LAUNCH CAMPAIGN (P$ev_fund_launch_*, see 00_setup)
+##
+## In 2017-04 the bank launched its own "Strategie Einkommen" fund. Trades in
+## that asset run 0, 0, 1, 1259, 105, 76 over 2017-01..06: 1210 clients buy
+## CHF 71.5 m of it in the launch month, 23% of all buying that month. It is a
+## marketing campaign, not a portfolio decision, and it is what made 2017-04 the
+## fattest-tailed flow month in the sample (p99 0.794 vs a median month 0.197).
+##
+## The trades are dropped here, and the affected client-months are written to
+## cache so 02_clean can also neutralise the pos_m FLOW field -- that field is a
+## position quantity change, not a trade, so dropping rows here does not reach it.
+## ---------------------------------------------------------------------------
+launch <- tr[MDate == P$ev_fund_launch_month & Asset_ID == P$ev_fund_launch_asset]
+if (nrow(launch)) {
+  log_step(sprintf("fund launch %s asset %s: dropped %s trades, %s clients, CHF %.1f m",
+                   format(P$ev_fund_launch_month), P$ev_fund_launch_asset,
+                   format(nrow(launch), big.mark = "'"),
+                   format(uniqueN(launch$Bp_ID), big.mark = "'"),
+                   sum(launch$chf) / 1e6))
+  save_dt(unique(launch[, .(Bp_ID, MDate)]), "event_fund_launch")
+  tr <- tr[!(MDate == P$ev_fund_launch_month & Asset_ID == P$ev_fund_launch_asset)]
+  log_step("trades after removing the launch campaign", tr)
+} else {
+  save_dt(data.table(Bp_ID = numeric(0), MDate = as.Date(character(0))),
+          "event_fund_launch")
+  log_step("fund-launch asset not found in the trade file; nothing dropped")
+}
+
+## ---------------------------------------------------------------------------
 ## 1. order route, channel, and whether the booking is a decision at all
 ## ---------------------------------------------------------------------------
 ## "Kauf" is matched case-sensitively so it does not swallow "Verkauf"; the

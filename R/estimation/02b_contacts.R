@@ -50,6 +50,32 @@ for (v in c("K_Anlegen","K_Performancebesprechung","init_by_advisor","init_by_cl
   ct[is.na(get(v)), (v) := 0]
 
 ## ---------------------------------------------------------------------------
+## DROP THE BULK MAILINGS (P$ev_bulk_mail_months, see 00_setup)
+##
+## A mass mailing is recorded exactly like outreach: one advisor-initiated
+## K_Anlegen contact per client reached. December 2014 is one -- 26080 mail
+## contacts in a month that normally carries ~1500 -- and it lands on the
+## reference month of the 2015-01 block, where it takes the advisor-initiated
+## contact rate to 0.899 against ~0.05 elsewhere. It also inflates contacts_pre
+## and adv_a_pre, which are controls in 06 and 07.
+##
+## Only the MAIL rows in those months go. The meetings and phone calls that
+## month are real advisory contact and are kept, so the month is corrected
+## rather than deleted.
+## ---------------------------------------------------------------------------
+if (length(P$ev_bulk_mail_months)) {
+  bulk <- ct[eom(ContactDate) %in% P$ev_bulk_mail_months &
+               K_mail > 0 & K_meeting == 0 & K_phone == 0, which = TRUE]
+  log_step(sprintf("bulk-mail months %s: dropped %s mail-only contacts (kept %s personal)",
+                   paste(format(P$ev_bulk_mail_months), collapse = ", "),
+                   format(length(bulk), big.mark = "'"),
+                   format(ct[eom(ContactDate) %in% P$ev_bulk_mail_months &
+                               (K_meeting > 0 | K_phone > 0), .N], big.mark = "'")))
+  if (length(bulk)) ct <- ct[-bulk]
+  log_step("contacts after removing bulk mail", ct)
+}
+
+## ---------------------------------------------------------------------------
 ## contact-day level
 ## ---------------------------------------------------------------------------
 ct[, `:=`(
@@ -64,16 +90,21 @@ ct[, `:=`(
   perf_p   = as.integer(perf == 1L & personal == 1L),
   perf_a_p = as.integer(perf == 1L & init_a == 1L & personal == 1L),
   inv_a    = as.integer(inv  == 1L & init_a == 1L),
+  inv_a_p  = as.integer(inv == 1L & init_a==1L & personal == 1L),
   inv_c    = as.integer(inv  == 1L & init_c == 1L),
+  inv_c_p   = as.integer(inv  == 1L & init_c == 1L & personal == 1L),
   advice   = as.integer(perf == 1L | inv == 1L),
   perf_inv = as.integer(perf == 1L & inv == 1L),
-  perf_inv_a = as.integer(perf == 1L & inv == 1L & init_a == 1L)
+  perf_inv_a = as.integer(perf == 1L & inv == 1L & init_a == 1L),
+  perf_inv_a_p = as.integer(perf == 1L & inv == 1L & init_a == 1L & personal == 1L)
 )]
 ct[, advice_a := as.integer(advice == 1L & init_a == 1L)]
 ct[, advice_c := as.integer(advice == 1L & init_c == 1L)]
+ct[, advice_a_p := as.integer(advice_a == 1L & personal == 1L)]
+ct[, advice_c_p := as.integer(advice_c == 1L & personal == 1L)]
 
 cd <- ct[, .(Bp_ID, ContactDate, MDate, perf, perf_a, perf_p, perf_a_p,
-             inv, inv_a, inv_c, advice, advice_a, advice_c, perf_inv, perf_inv_a, init_a, init_c,
+             inv, inv_a, inv_a_p, inv_c, advice, advice_a, advice_c, advice_a_p, advice_c_p, perf_inv, perf_inv_a, init_a, init_c, perf_inv_a_p,
              personal, K_meeting, K_phone, K_mail)]
 save_dt(cd, "contacts_d")
 log_step("contact-day file", cd)
@@ -81,8 +112,8 @@ log_step("contact-day file", cd)
 ## ---------------------------------------------------------------------------
 ## client x month indicators
 ## ---------------------------------------------------------------------------
-FLAGS <- c("perf","perf_a","perf_p","perf_a_p","inv","inv_a","inv_c",
-           "advice","advice_a","advice_c", "perf_inv", "perf_inv_a")
+FLAGS <- c("perf","perf_a","perf_p","perf_a_p","inv","inv_a", "inv_a_p","inv_c",
+           "advice","advice_a","advice_c", "advice_a_p", "advice_c_p", "perf_inv", "perf_inv_a")
 
 cm <- ct[, c(
   lapply(.SD, function(x) as.integer(any(x == 1L))),
@@ -90,7 +121,12 @@ cm <- ct[, c(
     n_perf       = sum(perf),
     n_inv        = sum(inv),
     first_advice = min(ContactDate[advice == 1L], na.rm = TRUE),
-    first_perf   = min(ContactDate[perf   == 1L], na.rm = TRUE))
+    first_inv    = min(ContactDate[inv == 1L], na.rm=T),
+    first_inv_a_p= min(ContactDate[inv_a_p == 1L],na.rm=T),
+    first_perf   = min(ContactDate[perf   == 1L], na.rm = TRUE),
+    first_perf_a_p = min(ContactDate[perf_a_p == 1L], na.rm= T),
+    first_inv_c = min(ContactDate[inv_c == 1L]),
+    first_inv_c_p = min(ContactDate[inv_c_p == 1L]))
 ), by = .(Bp_ID, MDate), .SDcols = FLAGS]
 setnames(cm, FLAGS, paste0("c_", FLAGS))
 for (v in c("first_advice","first_perf"))

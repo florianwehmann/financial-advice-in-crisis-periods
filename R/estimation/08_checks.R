@@ -23,10 +23,29 @@ log_init("08_checks")
 stk <- load_dt("stk")
 cle <- load_dt("cle")
 ep  <- load_dt("episodes")[usable == TRUE]
-stk <- cle[, .(Bp_ID, ep_id, smp_cycle)][stk, on = .(Bp_ID, ep_id)]
+## update join, not a right join: the right join copies all ~110 columns of a
+## 2.8 m-row table just to add one flag
+stk[cle[, .(Bp_ID, ep_id, smp_cycle)], on = .(Bp_ID, ep_id), smp_cycle := i.smp_cycle]
+rm(cle); gc(verbose = FALSE)
 
 TRT <- "treat_perf"
-S <- stk[smp_main == 1L]
+
+## Use the SAME balanced event window as 06. Two reasons, and both matter:
+##   1. correctness -- this script exists to compare P(sell) measures against
+##      each other, so they must be estimated on the same sample the headline
+##      uses. On the full rel_month range the stack thins from 6 blocks to 1,
+##      and each measure would be averaging a different set of episodes.
+##   2. memory -- the full range is 2.8 m rows and six ci+te event studies on
+##      it needs ~5 GB in a single allocation, which is where this script died.
+keep_rel <- es_window(stk, ep)
+
+S <- stk[smp_main == 1L & rel_month %in% keep_rel]
+## stk is not used again. It is 2.8 m rows wide and was staying alive through
+## every model fit, which is what pushed this script over the memory limit --
+## the event studies themselves fit fine on S alone.
+rm(stk); gc(verbose = FALSE)
+cat(sprintf("estimation rows: %s\n", format(nrow(S), big.mark = "'")))
+gc(verbose = FALSE)
 
 sink(file.path(RESULTS, "08_checks.txt"), split = TRUE)
 on.exit(sink(), add = TRUE)
@@ -84,29 +103,24 @@ print(S[, .(n = .N,
             mandate  = round(mean(sold_man),  4)), by = phase])
 cat("Only `self` is unambiguously the client's own decision to sell. The flow\n")
 cat("field pools all four with corporate actions on top.\n")
+## Fit in GROUPS and drop each group as soon as its table, its pre-trend test
+## and its figure are done. Holding all six fitted models at once is what killed
+## this script: a fixest object on a 1.5 m-row panel with ~93k client x episode
+## fixed effects is large, and six of them alive together exhausts the machine.
+## Only the printed tables and the pre-trend lines survive each group.
+PRE_LINES <- character(0)
+fit_show <- function(y, label) {
+  m <- feols(mk_fml(y), S, vcov = ~ advisor_id, notes = FALSE)
+  cat("\n--- P(sell), ", label, " ---\n", sep = ""); print(es_tab(m))
+  w <- tryCatch(wald(m, keep = PRE_RX, print = FALSE), error = function(e) NULL)
+  PRE_LINES <<- c(PRE_LINES, if (is.list(w) && !is.null(w$stat))
+    sprintf("%-40s F = %8.3f  df1 = %3.0f  p = %.4f", label, w$stat, w$df1, w$p)
+    else sprintf("%-40s (no pre-period test available)", label))
+  m
+}
 
-m_flow  <- feols(mk_fml("sold_flow"),  S, vcov = ~ advisor_id, notes = FALSE)
-m_trade <- feols(mk_fml("sold_trade"), S, vcov = ~ advisor_id, notes = FALSE)
-m_dec   <- feols(mk_fml("sold_dec"),   S, vcov = ~ advisor_id, notes = FALSE)
-m_self  <- feols(mk_fml("sold_self"),  S, vcov = ~ advisor_id, notes = FALSE)
-m_adv   <- feols(mk_fml("sold_adv"),   S, vcov = ~ advisor_id, notes = FALSE)
-m_man   <- feols(mk_fml("sold_man"),   S, vcov = ~ advisor_id, notes = FALSE)
-
-cat("\n--- P(sell), FLOW field ---\n");        print(es_tab(m_flow))
-cat("\n--- P(sell), BOOKED TRADES ---\n");     print(es_tab(m_trade))
-cat("\n--- P(sell), DECISION only ---\n");     print(es_tab(m_dec))
-cat("\n--- P(sell), CLIENT-ENTERED (e-banking) ---\n"); print(es_tab(m_self))
-cat("\n--- P(sell), ADVISOR-ENTERED ---\n");   print(es_tab(m_adv))
-cat("\n--- P(sell), MANDATE DESK ---\n");      print(es_tab(m_man))
-
-cat("\nparallel-trends test on the pre-period:\n")
-pretrend(m_flow,  "P(sell), flow field")
-pretrend(m_trade, "P(sell), booked trades")
-pretrend(m_dec,   "P(sell), decision only")
-pretrend(m_self,  "P(sell), client-entered")
-pretrend(m_adv,   "P(sell), advisor-entered")
-pretrend(m_man,   "P(sell), mandate desk")
-
+m_flow  <- fit_show("sold_flow",  "FLOW field")
+m_trade <- fit_show("sold_trade", "BOOKED TRADES")
 if (pdf_ok(file.path(FIG_DIR, "08_es_psell_compare.pdf"), width = 9, height = 5)) {
   iplot(list(m_flow, m_trade), main = "P(sell): flow field vs. booked trades",
         xlab = "months since dd_start (-1 = last pre-drawdown month)")
@@ -114,7 +128,14 @@ if (pdf_ok(file.path(FIG_DIR, "08_es_psell_compare.pdf"), width = 9, height = 5)
          col = 1:2, pch = 16, bty = "n")
   dev.off()
 }
+rm(m_flow, m_trade); gc(verbose = FALSE)
 
+m_dec <- fit_show("sold_dec", "DECISION only")
+rm(m_dec); gc(verbose = FALSE)
+
+m_self <- fit_show("sold_self", "CLIENT-ENTERED (e-banking)")
+m_adv  <- fit_show("sold_adv",  "ADVISOR-ENTERED")
+m_man  <- fit_show("sold_man",  "MANDATE DESK")
 if (pdf_ok(file.path(FIG_DIR, "08_es_psell_channel.pdf"), width = 9, height = 5)) {
   iplot(list(m_self, m_adv, m_man), main = "P(sell) by who entered the order",
         xlab = "months since dd_start (-1 = last pre-drawdown month)")
@@ -123,6 +144,10 @@ if (pdf_ok(file.path(FIG_DIR, "08_es_psell_channel.pdf"), width = 9, height = 5)
   abline(v = 0, lty = 3); abline(h = 0, col = "grey60")
   dev.off()
 }
+rm(m_self, m_adv, m_man); gc(verbose = FALSE)
+
+cat("\nparallel-trends test on the pre-period:\n")
+cat(PRE_LINES, sep = "\n"); cat("\n")
 
 cat("\n-- raw monthly P(sell) by channel and treatment, drawdown months only --\n")
 print(S[phase == "drawdown", .(n = .N,

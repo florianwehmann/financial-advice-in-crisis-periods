@@ -135,9 +135,17 @@ WHERE Instrumentengruppe <> 'Kredit' GROUP BY 1 ORDER BY 1",
 ## ---------------------------------------------------------------------------
 ## 1. client x month composition
 ## ---------------------------------------------------------------------------
+
+# f.DA_Titelkursabweichung_CHF, f.DA_Devisenkursabweichung_CHF, f.DA_Mengenabweichung_CHF
+# dbExecute(con, "SET temp_directory='/tmp/duckdb_spill'")   # or a path with lots of free space
+dbExecute(con, "SET preserve_insertion_order=false")
+dbExecute(con, "SET threads=4")                            # fewer threads = less peak RAM
+dbExecute(con, "SET memory_limit='6GB'")                   # only if you actually have it
+
 sql_pf <- sprintf("
 WITH p AS (
   SELECT f.Bp_ID, f.MDate, f.Asset_ID, f.Vermoegen_CHF AS v,
+   f.DA_Titelkursabweichung_CHF as dp,
          coalesce(a.cls, 'other') AS cls
   FROM read_parquet('%s') f
   LEFT JOIN asset_cls a ON f.Asset_ID = a.Asset_ID
@@ -145,6 +153,7 @@ WITH p AS (
 )
 SELECT Bp_ID, MDate,
        sum(v)                                         AS tot_value,
+       sum(dp)                                   AS d_price,
        sum(CASE WHEN cls='equity' THEN v ELSE 0 END)  AS v_equity,
        sum(CASE WHEN cls='bond'   THEN v ELSE 0 END)  AS v_bond,
        sum(CASE WHEN cls='mixed'  THEN v ELSE 0 END)  AS v_mixed,

@@ -17,7 +17,7 @@ emp_dir_raw <- "C:/Users/FWehmann/Dropbox/Wehmann Household Finance Project/RawD
 f_pos  <- file.path(emp_dir_raw, "T30_Pos_fact.parquet")
 f_bp   <- file.path(emp_dir_raw, "T01_Bp_Snapshot.parquet")
 f_cont <- file.path(emp_dir_raw, "T05_Cont_Snapshot.parquet")
-f_out  <- file.path("../data/pos_merged.parquet")
+f_out  <- file.path("../../data/pos_merged.parquet")
 
 stopifnot(all(file.exists(f_pos, f_bp, f_cont)))
 
@@ -58,6 +58,7 @@ pos_cols <- c("Bp_ID","Person_ID","Cont_ID","Period_ID","Asset_ID","Asset","Kont
 cols_sql <- paste(sprintf('"%s"', pos_cols), collapse = ", ")
 
 exclude <- c("Bar","Nicht zugeteilt (Dummy)","Money Market Deposit","Swaps","Limite","Waehrung")
+exclude <- c("Bar","Nicht zugeteilt (Dummy)","Money Market Deposit","Swaps","Limite","Waehrung")
 
 excl_sql <- paste(dbQuoteString(con, exclude), collapse = ", ")
 
@@ -84,4 +85,4 @@ pos[, MDate := as.IDate(lubridate::ceiling_date(as.Date(paste0(substr(Period_ID,
 setcolorder(pos,"MDate")
 setorder(pos,MDate,Bp_ID,Asset_ID)
 
-write_parquet(pos,paste0("../data/pos_m1.parquet"))
+write_parquet(pos,paste0("../../data/pos_m1.parquet"))

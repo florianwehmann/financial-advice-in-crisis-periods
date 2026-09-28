@@ -40,7 +40,7 @@ win <- cle[, .(Bp_ID, ep_id, pre_start, post_end)]
 
 stk <- pan[win, on = .(Bp_ID, MDate >= pre_start, MDate <= post_end),
            .(Bp_ID, ep_id, MDate = x.MDate, observed, status, wealth, log_w, pf_ret,
-             buysell, sell, buy, netflow_r, sell_r, buy_r, n_assets, traded,
+             buysell, sell, dprice, dfx, buy, netflow_r, sell_r, buy_r, n_assets, traded,
              wealth_full, eq_share, bond_share, d_eq_share, n_assets_all,
              cash_free, cash_total, wealth_tot, risky_share_c, d_risky_share,
              cash_share, has_cash, left_bank, in_cash,
@@ -60,13 +60,21 @@ stk[, phase := fcase(MDate <  dd_start, "pre",
 setorder(stk, Bp_ID, ep_id, MDate)
 log_step("stacked event panel", stk)
 
+stk[,`:=`(dprice_c = cumsum(dprice),
+          dfx_c    = cumsum(dfx),
+          dqty_c   = cumsum(buysell)),by=.(Bp_ID,ep_id)]
+
 ## carry the client x episode constants that every spec needs
-stk <- cle[, .(Bp_ID, ep_id, treat_perf, treat_perf_a, treat_perf_p, treat_adv,
-               treat_advice, treat_inv, treat_cli, treat_adt,
-               n_contacts_adv, first_adv_day, on_review_cycle,
+stk <- cle[, .(Bp_ID, ep_id, 
+               treat_perf, treat_perf_a, treat_perf_p, treat_perf_a_p,
+               treat_adv, treat_advice, treat_inv, treat_perf_inv_a_p,
+               treat_advice_a_p, treat_advice_c_p, treat_cli, treat_adt,
+               n_contacts_adv, first_adv_day, first_adv_a_p_day, first_adv_c_day,
+               first_perf_day, first_perf_a_p_day, on_review_cycle,
                wealth_pre, log_w_pre, n_assets_pre, ret_past12_pre, contacts_pre,
                adv_a_pre, perf_pre, discr_pre, main_bank_pre, advisor_id, smp_main,
-               smp_mainbank, sw_type, ep_num,
+               smp_mainbank, sw_type, ep_num, advisor_id, anlagepaket_pre, depot_pre,
+               segment_pre, dprice_pre, dfx_pre, dqty_pre,
                wealth_full_pre, eq_share_pre, bond_share_pre,
                cash_pre, wealth_tot_pre, risky_share_pre)][stk, on = .(Bp_ID, ep_id)]
 
@@ -124,6 +132,7 @@ stk[, `:=`(cf_own = cf_own / cf_own[rel_month == -1][1],
 
 ## realised wealth relative to the pre-episode month
 stk[, w_rel := wealth / wealth_pre]
+stk[, w_tot_rel := wealth_tot / wealth_tot_pre]
 
 ## gaps: >0 means the client did better than the counterfactual
 stk[, cf_gap_own := w_rel / cf_own - 1]
@@ -268,6 +277,21 @@ liq <- stk[rel_month >= 0, .(
   exits     = as.integer(any(status == "post_exit"))
 ), by = .(Bp_ID, ep_id)]
 liq[, full_liq := as.integer(min_w_rel < (1 - P$liq_thresh))]
+
+
+# add price, fx, and quantity changes from pos over the drawdown period
+pdd <- pan[cle[, .(Bp_ID, ep_id, dd_start, dd_end)],
+           on = .(Bp_ID, MDate >= dd_start, MDate <= dd_end),
+           .(Bp_ID, ep_id = i.ep_id, dprice, dfx, buysell),
+           allow.cartesian = TRUE]
+setorder(pdd,Bp_ID,ep_id)
+pdd <- pdd[, .(dprice_dd   = sum(dprice),
+               dfx_dd  = sum(dfx),
+               dqty_dd   = sum(buysell)),
+           by = .(Bp_ID, ep_id)]
+
+beh <- pdd[beh, on = .(Bp_ID, ep_id)]
+
 
 ## ---------------------------------------------------------------------------
 ## 5. outcome family 4 -- re-entry timing (de-riskers only)
@@ -425,7 +449,8 @@ cle[, smp_boerse := as.integer(smp_main == 1L & in_boerse == 1L)]
 ##   wealth. It is frozen pre-episode, so restricting on it changes the estimand
 ##   to a LATE for main-bank clients without biasing it -- and treatment rates
 ##   are balanced across it (12.8 vs 11.2, 3.5 vs 3.2, 16.7 vs 17.1 by episode).
-cle[, smp_mb := as.integer(smp_main == 1L & main_bank_pre == 1L)]
+cle[, smp_mb_exdisc := as.integer(smp_main == 1L & main_bank_pre == 1L)]
+cle[, smp_mb := as.integer(main_bank_pre == 1L)]
 
 ## return outcomes measured at the trough (12m forward from dd_end)
 r12 <- stk[MDate == dd_end, .(Bp_ID, ep_id, ret_next12_from_dd = ret_next12)]

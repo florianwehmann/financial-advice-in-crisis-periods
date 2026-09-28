@@ -264,7 +264,37 @@ pan[, `:=`(
 )]
 FLOWV <- c("netflow_r","sell_r","buy_r","sellflow_s","cost_r")
 for (v in FLOWV) pan[observed == 0L, (v) := 0]
+
+## The FUND-LAUNCH campaign (2017-04, see 00_setup and 02d). Dropping the trades
+## in 02d does not reach these ratios: netflow_r and sell_r/buy_r are built from
+## the pos_m FLOW field, which is a position quantity change, not a trade. For
+## the 1210 client-months that bought the launch fund the flow that month is a
+## marketing campaign rather than a portfolio decision, and it cannot be netted
+## out reliably (pos_m and boerse do not reconcile CHF for CHF). They are set to
+## NA instead, so those client-months drop out of any flow regression rather
+## than entering it distorted. 1210 of 5.9 m rows.
+## 02d writes this; guard so 02_clean can still be run on its own
+flf <- file.path(CACHE, "event_fund_launch.parquet")
+fl  <- if (file.exists(flf)) load_dt("event_fund_launch") else data.table()
+if (nrow(fl)) {
+  pan[fl, on = .(Bp_ID, MDate), (FLOWV) := NA_real_]
+  log_step(sprintf("fund-launch campaign: flow ratios set to NA for %s client-months",
+                   format(nrow(fl), big.mark = "'")))
+}
 pan[, (FLOWV) := lapply(.SD, winsor), by = MDate, .SDcols = FLOWV]
+## ... and then a POOLED cap on top. Winsorising a flow ratio within calendar
+## month sets the cut at that month's own quantile, so a month in which the
+## whole distribution shifts keeps its tail intact: 2017-04 has p99 = 0.794
+## against a median month's 0.197 and 3.5% of clients moving more than 20% of
+## their portfolio, against 0% in a normal month. That single month drove the
+## step changes at rel_month -9 and +27 in the netflow event study, because it
+## lands at a different rel_month in each block. The tighter of the two cuts
+## binds, so an ordinary month (own p99 ~0.15) is untouched.
+pan[, (FLOWV) := lapply(.SD, winsor, p = P$win_p_flow), .SDcols = FLOWV]
+for (v in FLOWV) {
+  q <- quantile(pan[[v]], P$win_p_flow, na.rm = TRUE)
+  log_step(sprintf("%-11s pooled cap [%+.3f, %+.3f]", v, q[1], q[2]))
+}
 
 ## the per-month counts and CHF amounts have done their job (the indicators and
 ## the two ratios above); 05 re-reads the detail from trades_m

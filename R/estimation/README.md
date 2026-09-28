@@ -41,7 +41,8 @@ the export never edits it and never stops the pipeline if the folder is absent.
 | `02d_trades.R` | `boerse` (2.6 m trades, 49 columns) → trade-level and client-month trade files, including the **order channel** (`Medium`) and the **commission** (`Kosten`). |
 | `02e_cash.R` | `pos_merged` (72.8 m rows, unfiltered) → **deposit balances**. duckdb. |
 | `02_clean.R` | client-month panel on an explicit gap-free grid, winsorised returns, flow ratios. |
-| `03_episodes.R` | drawdown episodes from the SPI total-return index. Prints the episode table. |
+| `stress_events.R` | the 19 hand-dated SMI/VIX stress windows. Read by `03_episodes.R` **and** by `episodes_smi_vix.R`, so the figure in the paper and the episodes in the regressions cannot drift apart. |
+| `03_episodes.R` | stress episodes. `P$episode_src` picks the source: `"events"` (default, from `stress_events.R`) or `"drawdown"` (the old mechanical peak-to-trough rule on the SPI TR). Prints the episode table. |
 | `04_treatment.R` | client × episode grid, treatment variants, frozen covariates, switcher table. |
 | `04b_cfgap.R` | the design's real counterfactual: holdings frozen at the pre-episode month end, drifted with observed security prices. |
 | `05_outcomes.R` | stacked event panel + the four outcome families. |
@@ -212,7 +213,9 @@ instrument. `smp_cycle` narrows the selection problem; it does not remove it.
 | parameter | value | note |
 |---|---|---|
 | `smp_start` / `smp_end` | 2011-03-31 / 2024-12-31 | start forced by the advice data |
-| `dd_threshold` | 0.15 | peak-to-trough on **daily** SPI TR |
+| `episode_src` | `"events"` | `"events"` = the hand-dated windows in `stress_events.R`; `"drawdown"` = the old mechanical rule |
+| `event_merge_gap` | 0 | two hand-dated events are one episode if their month-snapped windows touch |
+| `dd_threshold` | 0.15 | peak-to-trough on **daily** SPI TR; only used when `episode_src = "drawdown"` |
 | `pre_months` / `post_months` | 12 / 12 | post truncated at the next `dd_start` |
 | `min_wealth_pre` | 10 000 CHF | at the pre-episode month |
 | `min_bom_value` | 1 000 CHF | below this the return denominator is noise |
@@ -221,10 +224,65 @@ instrument. `smp_cycle` narrows the selection problem; it does not remove it.
 | `derisk_eq_drop` | 0.10 | equity-share fall, in share points, that counts as de-risking |
 | `forgone_h` | 6, 12 | horizons for the per-sale forgone return |
 
-Episodes are dated on **daily** closes: month-end closes would miss the Covid
-crash entirely (−26 % daily vs. −13 % month-end to month-end).
-
 ## Usable episodes
+
+`P$episode_src = "events"`: 19 hand-dated windows in `stress_events.R`, merged
+where their month-snapped windows touch, give 17 episodes of which **15** have a
+complete pre window inside the sample. `depth` is the peak-to-trough decline of
+the daily SPI TR measured *inside* the window; nothing downstream reads it.
+
+| id | event | window | depth | pre window | post window |
+|---|---|---|---|---|---|
+| `ep2_201305`  | Taper Tantrum        | 2013-05-20 … 2013-06-30 | −13.0 % | 2012-05 … 2013-04 | 2013-07 … 2014-06 (12) |
+| `ep3_201501`  | SNB floor abandoned  | 2015-01-10 … 2015-02-05 | −14.6 % | 2014-01 … 2014-12 | 2015-03 … 2015-07 (5) |
+| `ep4_201508`  | China flash crash    | 2015-08-10 … 2015-10-01 | −12.2 % | 2014-08 … 2015-07 | 2015-11 (1) |
+| `ep5_201512`  | Fed rate hike        | 2015-12-01 … 2015-12-31 |  −6.7 % | 2014-12 … 2015-11 | — (0) |
+| `ep6_201601`  | China & oil selloff  | 2016-01-04 … 2016-02-20 | −13.2 % | 2015-01 … 2015-12 | 2016-03 … 2016-05 (3) |
+| `ep7_201606`  | Brexit vote          | 2016-06-20 … 2016-07-15 |  −5.5 % | 2015-06 … 2016-05 | 2016-08 … 2016-10 (3) |
+| `ep8_201611`  | Trump election       | 2016-11-01 … 2016-12-15 |  −2.3 % | 2015-11 … 2016-10 | 2017-01 … 2017-12 (12) |
+| `ep9_201801`  | Volmageddon          | 2018-01-20 … 2018-03-30 |  −9.5 % | 2017-01 … 2017-12 | 2018-04 … 2018-10 (7) |
+| `ep10_201811` | Xmas Eve plunge      | 2018-11-20 … 2019-01-10 |  −9.9 % | 2017-11 … 2018-10 | 2019-02 … 2019-04 (3) |
+| `ep11_201905` | US–China trade war   | 2019-05-01 … 2019-06-30 |  −3.3 % | 2018-05 … 2019-04 | 2019-07 … 2020-01 (7) |
+| `ep12_202002` | COVID crash          | 2020-02-20 … 2020-04-01 | −25.7 % | 2019-02 … 2020-01 | 2020-05 … 2021-04 (12) |
+| `ep13_202201` | inflation + Ukraine  | 2022-01-03 … 2022-03-31 | −15.0 % | 2021-01 … 2021-12 | — (0) |
+| `ep14_202204` | supply chain         | 2022-04-20 … 2022-06-25 | −14.9 % | 2021-04 … 2022-03 | 2022-07 (1) |
+| `ep15_202208` | Hawkish Fed          | 2022-08-15 … 2022-10-05 | −10.8 % | 2021-08 … 2022-07 | 2022-11 … 2023-02 (4) |
+| `ep16_202303` | SVB & Credit Suisse  | 2023-03-08 … 2023-04-05 |  −3.7 % | 2022-03 … 2023-02 | 2023-05 … 2024-04 (12) |
+
+Dropped: `ep1_201107` (US downgrade + SNB floor introduction — its pre window
+starts 2010-07, before the sample) and `ep17_202407` (yen carry unwind — its post
+window runs past 2024-12).
+
+`rel_month == -1` is the last month end before the decline: the reference period
+of the event study and the freeze date of every covariate.
+
+### Two costs of the dense event list — read `results/03_episodes.txt`
+
+The hand-dated events sit much closer together than the 15 % drawdowns did, and
+the window machinery is unchanged, so two things degrade and the script now
+prints both:
+
+1. **Contaminated pre windows.** 11 of the 15 usable episodes have a 12-month pre
+   window that reaches back into the *previous* episode's drawdown, so
+   `rel_month = -1` — the event-study reference month and the freeze date for
+   every covariate — is itself a stress month for those episodes. `03` prints a
+   `WARNING:` naming them.
+2. **Truncated recovery windows.** `post_end` is still cut at the month before
+   the next episode's `dd_start`, so the median usable episode keeps **4** post
+   months and `ep5_201512` / `ep13_202201` keep **none**. Only four episodes
+   (`ep2`, `ep8`, `ep12`, `ep16`) keep the full 12. In the stacked panel the
+   phase split is 3.26 m pre / 0.68 m drawdown / 1.52 m recovery client-months,
+   so event-study coefficients past about `rel_month +4` are identified off a
+   handful of episodes and should not be read as the average recovery path.
+
+Both shrink with a shorter `P$pre_months` / `P$post_months`, or by filtering the
+event list on `depth`. Neither is applied by default: the windows are the ones
+`stress_events.R` specifies.
+
+### The old mechanical rule
+
+`P$episode_src = "drawdown"` restores it — every peak-to-trough decline of at
+least `P$dd_threshold` (15 %) on the daily SPI TR, which gives 3 usable episodes:
 
 | id | peak | trough | depth | pre window | post window |
 |---|---|---|---|---|---|
@@ -232,5 +290,5 @@ crash entirely (−26 % daily vs. −13 % month-end to month-end).
 | `ep3_202002` | 2020-02-19 | 2020-03-23 | −26.3 % | 2019-02 … 2020-01 | 2020-04 … 2021-03 |
 | `ep4_202112` | 2021-12-28 | 2022-09-26 | −21.8 % | 2020-12 … 2021-11 | 2022-10 … 2023-09 |
 
-`rel_month == -1` is the last month end before the decline: the reference period
-of the event study and the freeze date of every covariate.
+Episodes are dated on **daily** closes either way: month-end closes would miss
+the Covid crash entirely (−26 % daily vs. −13 % month-end to month-end).

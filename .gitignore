@@ -59,4 +59,28 @@ results/cache/
 
 *.RDataTmp
 *.RDataTmp1
+*.RDataTmp2
+*.RDataTmp3
+*.RDataTmp4
+*.RDataTmp5
+*.RDataTmp6
 *.Rhisotry
+
+# picture/pdfs
+*.png
+*.jpeg
+*.pdf
+
+# all csv and xlsx files
+*.csv
+*.xlsx
+
+# all data files
+*.parquet
+*.rds
+
+# all tex files
+*.tex
+*.txt
+*.md
+

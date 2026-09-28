@@ -58,7 +58,7 @@ setnames(cle, "MDate", "pre_month")
 cle <- cle[!is.na(obs_pre) & obs_pre == 1L]
 log_step("present (observed) in the pre-episode month", cle)
 
-cle <- cle[wealth_pre >= P$min_wealth_pre]
+cle <- cle[wealth_tot_pre >= P$min_wealth_pre]
 log_step(sprintf("pre-episode wealth >= %s CHF", P$min_wealth_pre), cle)
 
 ## ---------------------------------------------------------------------------
@@ -71,8 +71,8 @@ cd <- load_dt("contacts_d")
 dd_c <- cd[cle[, .(Bp_ID, ep_id, peak_date, trough_date)],
            on = .(Bp_ID, ContactDate >= peak_date, ContactDate <= trough_date),
            .(Bp_ID, ep_id, ContactDate = x.ContactDate, MDate,
-             perf, perf_a, perf_p, perf_a_p, inv, inv_a, inv_c,
-             advice, advice_a, advice_c),
+             perf, perf_a, perf_p, perf_a_p, inv, inv_a, inv_a_p, inv_c,
+             advice, advice_a, advice_c, advice_a_p, advice_c_p,perf_inv_a_p),
            allow.cartesian = TRUE][!is.na(ContactDate)]
 dd_c <- ep[, .(ep_id, peak_date, dd_start)][dd_c, on = "ep_id"]
 
@@ -81,10 +81,14 @@ trt <- dd_c[, .(
   treat_perf     = as.integer(any(perf   == 1L)),
   treat_perf_a   = as.integer(any(perf_a == 1L)),
   treat_perf_p   = as.integer(any(perf_p == 1L)),   # ... meeting or phone, no mail
+  treat_perf_a_p = as.integer(any(perf_a_p == 1L)),
   ## --- broader: any investment or review contact ---------------  -----------
   treat_adv      = as.integer(any(advice_a == 1L)), # advisor-initiated advice contact
   treat_advice   = as.integer(any(advice   == 1L)), # either initiator
   treat_inv      = as.integer(any(inv_a    == 1L)),
+  treat_perf_inv_a_p = as.integer(any(perf_inv_a_p == 1L)),
+  treat_advice_a_p = as.integer(any(advice_a_p == 1L)),
+  treat_advice_c_p = as.integer(any(advice_c_p == 1L)),
   ## --- client-initiated: PANIC PROXY, a control/outcome, never treatment ---
   treat_cli      = as.integer(any(advice_c == 1L)),
   ## --- intensive margin ---------------------------------------------------
@@ -96,7 +100,10 @@ trt <- dd_c[, .(
   ##     min() of an empty selection returns Inf (double) while a non-empty one
   ##     returns an integer; force numeric so the column type is stable
   first_adv_day  = min_na(as.numeric(ContactDate - peak_date)[advice_a == 1L]),
-  first_perf_day = min_na(as.numeric(ContactDate - peak_date)[perf     == 1L]),
+  first_adv_a_p_day  = min_na(as.numeric(ContactDate - peak_date)[inv_a_p == 1L]),
+  first_adv_c_day  = min_na(as.numeric(ContactDate - peak_date)[inv_c == 1L]),
+  first_perf_day = min_na(as.numeric(ContactDate - peak_date)[perf         == 1L]),
+  first_perf_a_p_day = min_na(as.numeric(ContactDate - peak_date)[perf_a_p == 1L]),
   first_adv_rel_month = min_na(as.numeric(mdiff(MDate, dd_start))[advice_a == 1L])
 ), by = .(Bp_ID, ep_id)]
 
@@ -113,10 +120,20 @@ bk <- pan[cle[, .(Bp_ID, ep_id, dd_start, dd_end)],
 cle <- trt[cle, on = .(Bp_ID, ep_id)]
 cle <- bk[cle,  on = .(Bp_ID, ep_id)]
 cle[is.na(n_months_dd), `:=`(n_months_dd = 0L, n_months_obs_dd = 0L)]
-for (v in c("treat_perf","treat_perf_a","treat_perf_p","treat_adv","treat_advice",
-            "treat_inv","treat_cli","n_contacts_adv","n_contacts_cli",
+## A client x episode with no contact record inside [peak_date, trough_date]
+## has no row in trt, so the join leaves NA. NA here is a true 0 -- not
+## "unknown" -- and any variant left as NA is silently dropped by feols, which
+## restricts the regression to clients who were contacted during the drawdown.
+## That is exactly the selection the treatment is meant to measure, so every
+## treatment variant must be filled, not just the ones built first.
+for (v in c("treat_perf","treat_perf_a","treat_perf_p","treat_perf_a_p",
+            "treat_adv","treat_advice","treat_inv","treat_perf_inv_a_p",
+            "treat_advice_a_p","treat_advice_c_p","treat_cli",
+            "n_contacts_adv","n_contacts_cli",
             "n_contacts_perf","n_months_adv","traded_dd","treat_adt","treat_adt_any"))
   cle[is.na(get(v)), (v) := 0L]
+
+stopifnot(!anyNA(cle[, .SD, .SDcols = patterns("^treat_")]))
 
 ## ---------------------------------------------------------------------------
 ## 3. frozen pre-episode covariates measured over the 12 months BEFORE dd_start
@@ -125,7 +142,7 @@ for (v in c("treat_perf","treat_perf_a","treat_perf_p","treat_adv","treat_advice
 
 pre_win <- pan[cle[, .(Bp_ID, ep_id, pre_start, pre_month)],
                on = .(Bp_ID, MDate >= pre_start, MDate <= pre_month),
-               .(Bp_ID, ep_id, c_advice, c_advice_a, c_advice_c, c_perf,
+               .(Bp_ID, ep_id, c_advice, c_advice_a, c_advice_c, c_perf, dprice, dfx,buysell,
                  traded, observed),
                allow.cartesian = TRUE][
   , .(contacts_pre   = sum(c_advice   == 1L),   # months with an advice contact
@@ -133,11 +150,14 @@ pre_win <- pan[cle[, .(Bp_ID, ep_id, pre_start, pre_month)],
       adv_c_pre      = sum(c_advice_c == 1L),
       perf_pre       = sum(c_perf     == 1L),
       months_traded_pre = sum(traded == 1L),
-      months_obs_pre = sum(observed == 1L)), by = .(Bp_ID, ep_id)]
+      months_obs_pre = sum(observed == 1L),
+      dprice_pre = sum(dprice,na.rm=T),
+      dfx_pre = sum(dfx,na.rm=T),
+      dqty_pre = sum(buysell,na.rm=T)), by = .(Bp_ID, ep_id)]
 
 cle <- pre_win[cle, on = .(Bp_ID, ep_id)]
 for (v in c("contacts_pre","adv_a_pre","adv_c_pre","perf_pre",
-            "months_traded_pre","months_obs_pre"))
+            "months_traded_pre","months_obs_pre","dprice_pre","dfx_pre","dqty_pre"))
   cle[is.na(get(v)), (v) := 0L]
 
 ## has this client ever had a portfolio review before the episode? A client who

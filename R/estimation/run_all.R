@@ -19,6 +19,7 @@ steps <- c("01_audit.R",        # audit pos_m
            "04b_cfgap.R",       # frozen-holdings counterfactual (needs 04)
            "05_outcomes.R", "06_specs.R", "07_robustness.R",
            "08_checks.R",      # P(sell) source/channel forensics, eq-share pre-trend
+           "11_supply_demand.R", # advice supply vs demand; advisor capacity
            "09_export.R")      # publish tables + figures to the paper folder
 
 ## Each script is run with eval(parse()), NOT source(), and this matters.

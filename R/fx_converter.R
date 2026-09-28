@@ -22,7 +22,8 @@ library(data.table)
 fx_path <- function() {
   # .Rproj lives in R/, so data/ is one level up. Override with
   # options(fx.file = "...") if the script is sourced from elsewhere.
-  getOption("fx.file", "../data/eurofxref-hist.csv")
+  # getOption("fx.file", "../../data/eurofxref-hist.csv")
+  getOption("fx.file", "C:/GitHub/financial-advice-in-crisis-periods/data/eurofxref-hist.csv")
 }
 
 .fx_cache <- new.env(parent = emptyenv())
